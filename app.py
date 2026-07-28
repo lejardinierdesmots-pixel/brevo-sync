@@ -4,93 +4,146 @@ import os
 
 app = Flask(__name__)
 
-# ==========================================
-# CONFIGURATION (Variables Render)
-# ==========================================
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 TENANT_ID = os.getenv("TENANT_ID")
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-USER_EMAIL = os.getenv("USER_EMAIL")   # <- À AJOUTER dans Render
+USER_EMAIL = os.getenv("USER_EMAIL")
 
-# ==========================================
-# Vérification au démarrage
-# ==========================================
-print("========== DÉMARRAGE ==========")
+# ============================================================
+# DÉMARRAGE
+# ============================================================
 
-for var in ["TENANT_ID", "CLIENT_ID", "CLIENT_SECRET", "USER_EMAIL"]:
-    if os.getenv(var):
-        print(f"✓ {var} chargé")
-    else:
-        print(f"❌ {var} MANQUANT")
+print("\n===================================")
+print(" Brevo → Microsoft Sync v3.0")
+print("===================================")
 
-print("===============================\n")
+for variable in [
+    "TENANT_ID",
+    "CLIENT_ID",
+    "CLIENT_SECRET",
+    "USER_EMAIL"
+]:
+    valeur = os.getenv(variable)
+    print(f"{'✓' if valeur else '✗'} {variable}")
+
+print("===================================\n")
 
 
-# ==========================================
-# Obtenir un jeton Microsoft Graph
-# ==========================================
-def get_ms_token():
+# ============================================================
+# MICROSOFT GRAPH TOKEN
+# ============================================================
+
+def get_token():
 
     url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 
-    data = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://graph.microsoft.com/.default",
-        "grant_type": "client_credentials"
-    }
+    response = requests.post(
+        url,
+        data={
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "scope": "https://graph.microsoft.com/.default",
+            "grant_type": "client_credentials"
+        }
+    )
 
-    response = requests.post(url, data=data)
-
-    print("\n===== AZURE TOKEN =====")
+    print("\n========== AZURE ==========")
     print("Status :", response.status_code)
 
-    if response.status_code != 200:
-        print(response.text)
-        response.raise_for_status()
+    response.raise_for_status()
 
     token = response.json()["access_token"]
 
-    print("Token obtenu avec succès.\n")
+    print("Jeton obtenu.")
 
     return token
 
 
-# ==========================================
+# ============================================================
 # WEBHOOK BREVO
-# ==========================================
+# ============================================================
+
 @app.route("/brevo-sync", methods=["POST"])
-def brevo_sync():
+def brevo():
 
     data = request.get_json(force=True)
 
     print("\n==============================")
-    print("WEBHOOK BREVO REÇU")
+    print("WEBHOOK BREVO")
     print("==============================")
     print(data)
 
+    event = data.get("event", "")
+
+    print("Événement :", event)
+
+    # --------------------------------------------------------
+
+    if event == "contact_deleted":
+
+        print("Événement ignoré.")
+
+        return jsonify({
+            "ignored": True,
+            "reason": "contact_deleted"
+        }), 200
+
+    if event not in [
+        "contact_created",
+        "contact_updated"
+    ]:
+
+        print("Événement inconnu.")
+
+        return jsonify({
+            "ignored": True,
+            "event": event
+        }), 200
+
+    # --------------------------------------------------------
+    # Email
+    # --------------------------------------------------------
+
     email = data.get("email")
 
+    if isinstance(email, list):
+        email = email[0] if email else None
+
     if not email:
+
+        print("Aucun email.")
+
         return jsonify({
-            "error": "Aucune adresse email reçue."
+            "error": "Email manquant."
         }), 400
 
     attributes = data.get("attributes", {})
 
-    first_name = attributes.get("FIRSTNAME", "")
-    last_name = attributes.get("LASTNAME", "")
+    firstname = attributes.get("FIRSTNAME", "")
+    lastname = attributes.get("LASTNAME", "")
 
-    print("\nContact reçu :")
+    print("\nCONTACT")
     print("Email :", email)
-    print("Prénom :", first_name)
-    print("Nom :", last_name)
+    print("Prénom :", firstname)
+    print("Nom :", lastname)
 
-    # ----------------------
-    # Jeton Microsoft
-    # ----------------------
+    # --------------------------------------------------------
 
-    token = get_ms_token()
+    if not USER_EMAIL:
+
+        print("USER_EMAIL absent.")
+
+        return jsonify({
+            "error": "Variable USER_EMAIL absente."
+        }), 500
+
+    # --------------------------------------------------------
+
+    token = get_token()
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -98,20 +151,17 @@ def brevo_sync():
     }
 
     payload = {
-
-        "givenName": first_name,
-
-        "surname": last_name,
-
+        "givenName": firstname,
+        "surname": lastname,
         "emailAddresses": [
             {
                 "address": email,
-                "name": f"{first_name} {last_name}".strip()
+                "name": f"{firstname} {lastname}".strip()
             }
         ]
     }
 
-    print("\nPayload envoyé à Microsoft :")
+    print("\nPAYLOAD")
     print(payload)
 
     url = f"https://graph.microsoft.com/v1.0/users/{USER_EMAIL}/contacts"
@@ -122,38 +172,39 @@ def brevo_sync():
         json=payload
     )
 
-    print("\n===== MICROSOFT GRAPH =====")
-    print("URL :", url)
+    print("\n========== GRAPH ==========")
     print("Status :", response.status_code)
-    print("Réponse :")
     print(response.text)
 
     if response.status_code == 201:
 
-        print("\n✓ Contact créé avec succès.\n")
+        print("\n✓ Contact créé.")
 
         return jsonify({
-            "success": True,
-            "message": "Contact créé dans Outlook."
+            "success": True
         }), 201
+
+    print("\n✗ Erreur Graph.")
 
     return jsonify({
         "success": False,
         "status": response.status_code,
-        "graph_error": response.text
+        "graph": response.text
     }), response.status_code
 
 
-# ==========================================
-# Accueil
-# ==========================================
+# ============================================================
+# HOME
+# ============================================================
+
 @app.route("/", methods=["GET"])
 def home():
-    return "Brevo → Microsoft 365 Sync (v2.0)"
+    return "Brevo Sync v3.0 OK"
 
 
-# ==========================================
-# Lancement
-# ==========================================
+# ============================================================
+# MAIN
+# ============================================================
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

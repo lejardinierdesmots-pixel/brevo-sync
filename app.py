@@ -18,7 +18,7 @@ USER_EMAIL = os.getenv("USER_EMAIL")
 # ============================================================
 
 print("\n===================================")
-print(" Brevo → Microsoft Sync v3.0")
+print(" Brevo → Microsoft Sync v3.1")
 print("===================================")
 
 for variable in [
@@ -94,7 +94,8 @@ def brevo():
 
     if event not in [
         "contact_created",
-        "contact_updated"
+        "contact_updated",
+        "list_addition"
     ]:
 
         print("Événement inconnu.")
@@ -121,6 +122,7 @@ def brevo():
             "error": "Email manquant."
         }), 400
 
+    # list_addition n'a pas de bloc "attributes" (pas de FIRSTNAME/LASTNAME)
     attributes = data.get("attributes", {})
 
     firstname = attributes.get("FIRSTNAME", "")
@@ -156,7 +158,7 @@ def brevo():
         "emailAddresses": [
             {
                 "address": email,
-                "name": f"{firstname} {lastname}".strip()
+                "name": f"{firstname} {lastname}".strip() or email
             }
         ]
     }
@@ -199,7 +201,7 @@ def brevo():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Brevo Sync v3.0 OK"
+    return "Brevo Sync v3.1 OK"
 
 
 # ============================================================
